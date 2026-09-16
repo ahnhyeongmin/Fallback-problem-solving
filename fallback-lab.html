@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fallback 취약점 실습 — 소유권 탈취</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    color-scheme:light;
+    --paper:#ffffff; --surface:#ffffff; --panel:#eceff1; --ink:#17242d; --ink-soft:#5b6c75;
+    --line:#d8dfe3; --line-strong:#c1cbd0;
+    --steel:#2f6f8f; --steel-deep:#215268; --steel-soft:#e4eef3;
+    --danger:#c34634; --danger-soft:#fae9e6;
+    --amber:#a9711a; --amber-soft:#f8efdc;
+    --safe:#2c8862; --safe-soft:#e3f2ea;
+    --codebg:#101d25; --codefg:#d7e3ea; --codeline:#1d2c35; --codenum:#57707d;
+    --c-kw:#82b4d6; --c-str:#cba46a; --c-com:#5c7581; --c-num:#dd9179; --c-fn:#9dd0b4;
+    --sans:'Inter',-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
+    --disp:'Space Grotesk',var(--sans);
+    --mono:'JetBrains Mono','Cascadia Mono',Consolas,monospace;
+    --shadow:0 1px 2px rgba(23,36,45,.05),0 8px 24px rgba(23,36,45,.06);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --paper:#0d1317; --surface:#141d23; --panel:#18232a; --ink:#e6edf0; --ink-soft:#93a4ad;
+      --line:#25333b; --line-strong:#31424c;
+      --steel:#66aecb; --steel-deep:#4b90ad; --steel-soft:#13242c;
+      --danger:#e08373; --danger-soft:#281512;
+      --amber:#d1a24d; --amber-soft:#241c10; --safe:#5cb98c; --safe-soft:#101f17;
+      --codebg:#0b141a; --codefg:#d7e3ea; --codeline:#182530; --codenum:#4d6672;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0d1317; --surface:#141d23; --panel:#18232a; --ink:#e6edf0; --ink-soft:#93a4ad;
+    --line:#25333b; --line-strong:#31424c;
+    --steel:#66aecb; --steel-deep:#4b90ad; --steel-soft:#13242c;
+    --danger:#e08373; --danger-soft:#281512; --amber:#d1a24d; --amber-soft:#241c10;
+    --safe:#5cb98c; --safe-soft:#101f17;
+    --codebg:#0b141a; --codefg:#d7e3ea; --codeline:#182530; --codenum:#4d6672;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{font-family:var(--sans);color:var(--ink);background:var(--paper);line-height:1.62;
+       -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  .wrap{max-width:1180px;margin:0 auto;padding:22px 22px 120px}
+
+  /* ---- top bar ---- */
+  .top{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;
+       padding-bottom:16px;border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:11px;min-width:0}
+  .glyph{width:30px;height:30px;flex:0 0 30px;border-radius:8px;background:var(--codebg);
+         display:grid;place-items:center;font-family:var(--mono);color:var(--c-fn);font-weight:600;font-size:15px}
+  .brand b{font-family:var(--disp);font-weight:600;font-size:15.5px;letter-spacing:-.01em}
+  .brand span{color:var(--ink-soft);font-size:13px}
+  .progress{display:flex;align-items:center;gap:7px}
+  .pstep{display:flex;align-items:center;gap:7px;color:var(--ink-soft);font-size:12.5px;font-weight:500}
+  .pdot{width:22px;height:6px;border-radius:3px;background:var(--line-strong);transition:background .25s}
+  .pdot.done{background:var(--steel)} .pdot.now{background:var(--ink)}
+
+  /* ---- stage shell ---- */
+  .stage{display:none;animation:enter .3s ease both}
+  .stage.on{display:block}
+  @keyframes enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){.stage{animation:none}}
+
+  .eyebrow{font-family:var(--mono);font-size:12px;color:var(--steel);font-weight:600;margin:30px 0 8px}
+  h1{font-family:var(--disp);font-size:29px;line-height:1.25;letter-spacing:-.02em;margin:0 0 8px;font-weight:700}
+  .lede{color:var(--ink-soft);font-size:15.5px;margin:0 0 26px;max-width:70ch}
+
+  /* ---- code panel ---- */
+  .code{background:var(--codebg);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
+  .code-hd{display:flex;align-items:center;gap:8px;padding:11px 15px;border-bottom:1px solid var(--codeline);
+           font-family:var(--mono);font-size:12.5px;color:var(--codenum)}
+  .tl{display:flex;gap:6px} .tl i{width:10px;height:10px;border-radius:50%;background:#33454f;display:block}
+  .code-body{padding:12px 0;overflow-x:auto;max-height:none}
+  .ln{display:flex;font-family:var(--mono);font-size:13.5px;line-height:1.75}
+  .ln .no{flex:0 0 46px;text-align:right;padding-right:16px;color:var(--codenum);user-select:none}
+  .ln .tx{white-space:pre;padding-right:20px;color:var(--codefg)}
+  .ln.hot{background:rgba(195,70,52,.14)}
+  .ln.hot .no{color:var(--danger);font-weight:600}
+  .ln.warm{background:rgba(169,113,26,.16)} .ln.warm .no{color:var(--amber);font-weight:600}
+  .ln.cool{background:rgba(47,111,143,.16)} .ln.cool .no{color:var(--steel);font-weight:600}
+  .c-kw{color:var(--c-kw)} .c-str{color:var(--c-str)} .c-com{color:var(--c-com);font-style:italic}
+  .c-num{color:var(--c-num)} .c-fn{color:var(--c-fn)}
+
+  /* ---- stage 1 layout ---- */
+  .s1{display:grid;grid-template-columns:1fr 400px;gap:24px;align-items:start}
+  .fnlist{display:flex;flex-direction:column;gap:9px}
+  .fn{border:1px solid var(--line);background:var(--surface);border-radius:11px;overflow:hidden;transition:border-color .18s}
+  .fn:hover{border-color:var(--line-strong)}
+  .fn.open{border-color:var(--steel)}
+  .fn.vuln.open{border-color:var(--danger)}
+  .fn-hd{display:flex;align-items:center;gap:10px;padding:13px 15px;cursor:pointer;user-select:none}
+  .fn-hd .sig{font-family:var(--mono);font-size:13px;font-weight:600}
+  .fn-hd .tag{margin-left:auto;font-size:11px;font-weight:600;padding:3px 8px;border-radius:20px;
+              background:var(--panel);color:var(--ink-soft)}
+  .fn.vuln .fn-hd .tag{background:var(--danger-soft);color:var(--danger)}
+  .fn-hd .chev{color:var(--ink-soft);transition:transform .2s;font-size:13px}
+  .fn.open .fn-hd .chev{transform:rotate(90deg)}
+  .fn-body{max-height:0;overflow:hidden;transition:max-height .28s ease}
+  .fn-body .inner{padding:0 15px 15px;color:var(--ink-soft);font-size:14px}
+  .fn-body p{margin:0 0 8px} .fn-body p:last-child{margin:0}
+  .fn-body code{font-family:var(--mono);font-size:12.5px;background:var(--panel);color:var(--ink);
+                padding:1px 5px;border-radius:5px}
+  .note{padding:10px 12px;border-radius:8px;font-size:13px;margin-top:9px;line-height:1.55}
+  .note.warn{background:var(--danger-soft);color:var(--danger)}
+  .note.info{background:var(--steel-soft);color:var(--steel-deep)}
+
+  .syntax{margin-top:26px}
+  .syntax h3{font-family:var(--disp);font-size:16px;margin:0 0 6px}
+  .syntax .hint{color:var(--ink-soft);font-size:13.5px;margin:0 0 14px}
+  .chips{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:11px}
+  .chip{border:1px solid var(--line);border-radius:10px;padding:12px 13px;background:var(--surface)}
+  .chip .k{font-family:var(--mono);font-size:12.5px;color:var(--steel);font-weight:600;display:block;margin-bottom:3px}
+  .chip .d{font-size:13px;color:var(--ink-soft)}
+
+  .order{margin-top:26px;border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:16px 18px}
+  .order h3{font-family:var(--disp);font-size:16px;margin:0 0 12px}
+  .flow{display:flex;flex-direction:column;gap:9px}
+  .fl{display:flex;gap:11px;align-items:flex-start;font-size:14px}
+  .fl .b{flex:0 0 auto;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--steel);
+         background:var(--steel-soft);border-radius:6px;padding:2px 8px;margin-top:1px}
+  .fl.v .b{color:var(--danger);background:var(--danger-soft)}
+
+  /* ---- stage 2 sim ---- */
+  .s2{display:grid;grid-template-columns:1fr 420px;gap:24px;align-items:start}
+  .ledger{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+  .card{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:15px 16px;position:relative;overflow:hidden}
+  .card .lbl{font-size:12.5px;color:var(--ink-soft);display:flex;align-items:center;gap:7px}
+  .card .lbl .ic{width:9px;height:9px;border-radius:50%;background:var(--steel)}
+  .card.contract .lbl .ic{background:var(--ink-soft)}
+  .card .val{font-family:var(--mono);font-size:26px;font-weight:600;letter-spacing:-.02em;margin-top:6px}
+  .card .val small{font-size:14px;color:var(--ink-soft);font-weight:400;margin-left:4px}
+  .card .sub{font-size:12px;color:var(--ink-soft);margin-top:2px;font-family:var(--mono)}
+  .card.flash-up{animation:fup .7s ease}
+  .card.flash-dn{animation:fdn .7s ease}
+  @keyframes fup{0%,100%{box-shadow:none}30%{box-shadow:0 0 0 2px var(--safe) inset}}
+  @keyframes fdn{0%,100%{box-shadow:none}30%{box-shadow:0 0 0 2px var(--danger) inset}}
+  @media (prefers-reduced-motion:reduce){.card.flash-up,.card.flash-dn{animation:none}}
+
+  .owner{grid-column:1 / -1;border:1px solid var(--line);border-radius:12px;background:var(--surface);
+         padding:14px 16px;display:flex;align-items:center;gap:12px;transition:.3s}
+  .owner .who{font-family:var(--mono);font-size:17px;font-weight:600}
+  .owner .lbl{font-size:12.5px;color:var(--ink-soft)}
+  .owner.hijacked{background:var(--danger-soft);border-color:var(--danger)}
+  .owner.hijacked .who{color:var(--danger)}
+  .owner .badge{margin-left:auto;font-size:11.5px;font-weight:600;padding:4px 10px;border-radius:20px;
+                background:var(--panel);color:var(--ink-soft)}
+  .owner.hijacked .badge{background:var(--danger);color:#fff}
+
+  .console{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:16px 18px;position:sticky;top:16px}
+  .console .stepno{font-family:var(--mono);font-size:12px;color:var(--ink-soft)}
+  .console h4{font-family:var(--disp);font-size:17px;margin:4px 0 10px}
+  .tx{font-family:var(--mono);font-size:12.5px;background:var(--codebg);color:var(--codefg);
+      border-radius:8px;padding:11px 13px;margin:0 0 12px;overflow-x:auto;white-space:pre;line-height:1.6}
+  .tx .arrow{color:var(--c-fn)} .tx .val{color:var(--c-str)}
+  .console .desc{font-size:14px;color:var(--ink-soft);margin:0 0 6px}
+  .console .desc.point{color:var(--ink);background:var(--panel);border-radius:8px;padding:10px 12px;
+                       border-left:3px solid var(--steel)}
+  .console .desc.point.v{border-left-color:var(--danger)}
+  .simbtns{display:flex;gap:9px;margin-top:16px}
+
+  /* ---- stage 3 fix ---- */
+  .s3{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
+  .diag{font-size:14px;color:var(--ink-soft);margin:0 0 16px;max-width:64ch}
+  .target{background:var(--codebg);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+  .target .tt{font-family:var(--mono);font-size:11.5px;color:var(--codenum);margin-bottom:9px}
+  .target pre{margin:0;font-family:var(--mono);font-size:13.5px;line-height:1.8;color:var(--codefg);white-space:pre;overflow-x:auto}
+  .editor{margin-top:0}
+  .editor .el{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+  .editor .el b{font-family:var(--disp);font-size:15px}
+  .editor .status{margin-left:auto;font-size:12.5px;font-weight:600;font-family:var(--mono)}
+  .status.ok{color:var(--safe)} .status.no{color:var(--ink-soft)}
+  textarea{width:100%;min-height:150px;background:var(--codebg);color:var(--codefg);border:1px solid var(--codeline);
+           border-radius:12px;padding:14px 16px;font-family:var(--mono);font-size:13.5px;line-height:1.8;
+           resize:vertical;tab-size:4;outline:none;transition:border-color .2s}
+  textarea:focus{border-color:var(--steel)}
+  textarea.solved{border-color:var(--safe)}
+  .fbk{margin-top:11px;font-size:13.5px;border-radius:9px;padding:11px 13px;display:none}
+  .fbk.show{display:block}
+  .fbk.solved{background:var(--safe-soft);color:var(--safe);display:block}
+  .fbk.close{background:var(--amber-soft);color:var(--amber);display:block}
+  .revealbtn{background:none;border:none;color:var(--steel);font-size:13px;cursor:pointer;
+             text-decoration:underline;padding:8px 0 0;font-family:var(--sans)}
+
+  /* ---- stage 4 ---- */
+  .done{max-width:640px;margin:40px auto 0;text-align:center}
+  .done .seal{width:64px;height:64px;border-radius:18px;background:var(--safe-soft);color:var(--safe);
+              display:grid;place-items:center;margin:0 auto 20px;font-size:30px}
+  .done h1{font-size:30px}
+  .recap{text-align:left;border:1px solid var(--line);border-radius:14px;background:var(--surface);
+          padding:8px 4px;margin:26px 0}
+  .rc{display:flex;gap:13px;padding:14px 18px;border-bottom:1px solid var(--line)}
+  .rc:last-child{border-bottom:none}
+  .rc .n{flex:0 0 26px;height:26px;border-radius:8px;background:var(--steel-soft);color:var(--steel-deep);
+         display:grid;place-items:center;font-family:var(--mono);font-weight:600;font-size:13px}
+  .rc .t{font-size:14px} .rc .t b{font-weight:600}
+  .takeaway{background:var(--codebg);color:var(--codefg);border-radius:14px;padding:20px 22px;text-align:left}
+  .takeaway .q{font-family:var(--mono);font-size:12px;color:var(--c-fn);margin-bottom:8px}
+  .takeaway p{margin:0;font-size:15px;line-height:1.7}
+  .takeaway code{background:rgba(255,255,255,.08);padding:1px 6px;border-radius:5px;font-family:var(--mono);font-size:13px}
+
+  /* ---- buttons / footer nav ---- */
+  .btn{font-family:var(--sans);font-size:14px;font-weight:600;border-radius:9px;padding:11px 18px;
+       cursor:pointer;border:1px solid transparent;transition:.15s;line-height:1}
+  .btn:focus-visible{outline:3px solid var(--steel);outline-offset:2px}
+  .btn.primary{background:var(--ink);color:var(--paper)}
+  .btn.primary:hover{background:var(--steel-deep);color:#fff}
+  .btn.primary:disabled{opacity:.4;cursor:not-allowed;background:var(--ink)}
+  .btn.ghost{background:var(--surface);color:var(--ink);border-color:var(--line-strong)}
+  .btn.ghost:hover{border-color:var(--ink)}
+  .btn.ghost:disabled{opacity:.4;cursor:not-allowed}
+  .btn.danger{background:var(--danger);color:#fff}
+  .btn.danger:hover{filter:brightness(.94)}
+
+  .nav{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);
+       padding:12px 22px;z-index:20}
+  .nav-in{max-width:1180px;margin:0 auto;display:flex;align-items:center;gap:12px}
+  .nav .hintline{font-size:12.5px;color:var(--ink-soft)}
+  .nav .sp{flex:1}
+
+  @media (max-width:860px){
+    .s1,.s2,.s3{grid-template-columns:1fr}
+    .console{position:static}
+    h1{font-size:24px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="brand">
+      <div class="glyph">Ξ</div>
+      <div>
+        <b>Fallback 취약점 실습</b><br>
+        <span>스마트 컨트랙트 소유권 탈취 · Solidity</span>
+      </div>
+    </div>
+    <div class="progress" id="progress">
+      <div class="pstep"><span class="pdot"></span>개요</div>
+      <div class="pstep"><span class="pdot"></span>공격</div>
+      <div class="pstep"><span class="pdot"></span>수정</div>
+      <div class="pstep"><span class="pdot"></span>완료</div>
+    </div>
+  </div>
+
+  <!-- ============ STAGE 1 : OVERVIEW ============ -->
+  <section class="stage on" id="stage1">
+    <div class="eyebrow">STEP 1 — 컨트랙트 읽기</div>
+    <h1>이 컨트랙트는 무엇을 하는가</h1>
+    <p class="lede">기부를 받고, 소유자(owner)만 잔액을 인출할 수 있는 컨트랙트예요. 각 함수가 언제 실행되고 무엇을 바꾸는지 먼저 파악하면, 다음 단계의 공격이 왜 통하는지 자연스럽게 보입니다. 오른쪽 함수 카드를 눌러 설명을 펼쳐 보세요.</p>
+
+    <div class="s1">
+      <div class="code" id="code1">
+        <div class="code-hd"><span class="tl"><i></i><i></i><i></i></span>&nbsp;Fallback.sol</div>
+        <div class="code-body" id="codeBody1"></div>
+      </div>
+
+      <div>
+        <div class="fnlist" id="fnlist"></div>
+      </div>
+    </div>
+
+    <div class="order">
+      <h3>ETH를 보낼 때, 어떤 함수가 실행될까?</h3>
+      <div class="flow">
+        <div class="fl"><span class="b">A</span><div><b>함수를 지정</b>해서 호출 (calldata 있음) → 지정한 함수가 실행돼요. 예: <code style="font-family:var(--mono);font-size:12.5px">contribute()</code></div></div>
+        <div class="fl v"><span class="b">B</span><div>주소로 <b>ETH만 전송</b> (calldata 없음) → <code style="font-family:var(--mono);font-size:12.5px">receive()</code> 가 자동 실행돼요. ← 공격의 열쇠</div></div>
+        <div class="fl"><span class="b">C</span><div>이 컨트랙트에는 <code style="font-family:var(--mono);font-size:12.5px">fallback()</code> 이 없어요. calldata가 있는데 맞는 함수가 없으면 그냥 실패(revert)합니다.</div></div>
+      </div>
+    </div>
+
+    <div class="syntax">
+      <h3>알아두면 좋은 문법</h3>
+      <p class="hint">처음 보는 키워드가 있어도 괜찮아요. 아래만 알면 이 컨트랙트를 읽을 수 있습니다.</p>
+      <div class="chips" id="chips"></div>
+    </div>
+  </section>
+
+  <!-- ============ STAGE 2 : ATTACK ============ -->
+  <section class="stage" id="stage2">
+    <div class="eyebrow">STEP 2 — 공격자의 시점</div>
+    <h1>소유권을 훔치고 잔액을 빼내기</h1>
+    <p class="lede">공격자가 되어 한 단계씩 트랜잭션을 실행해 봅니다. 매 단계마다 <b>공격자 지갑</b>, <b>컨트랙트 잔액</b>, <b>현재 소유자</b>가 어떻게 바뀌는지 지켜보세요. (가스비는 이해를 위해 생략합니다.)</p>
+
+    <div class="s2">
+      <div>
+        <div class="ledger">
+          <div class="card attacker" id="cardAtk">
+            <div class="lbl"><span class="ic"></span>공격자 지갑</div>
+            <div class="val"><span id="atkBal">10.0000</span><small>ETH</small></div>
+            <div class="sub">0xAttacker</div>
+          </div>
+          <div class="card contract" id="cardCon">
+            <div class="lbl"><span class="ic"></span>컨트랙트 잔액</div>
+            <div class="val"><span id="conBal">5.0000</span><small>ETH</small></div>
+            <div class="sub">Fallback</div>
+          </div>
+          <div class="owner" id="ownerBox">
+            <div>
+              <div class="lbl">현재 소유자 (owner)</div>
+              <div class="who" id="ownerWho">배포자</div>
+            </div>
+            <div class="badge" id="ownerBadge">정상</div>
+          </div>
+        </div>
+
+        <div class="code" id="code2">
+          <div class="code-hd"><span class="tl"><i></i><i></i><i></i></span>&nbsp;실행 중인 코드</div>
+          <div class="code-body" id="codeBody2"></div>
+        </div>
+      </div>
+
+      <div class="console">
+        <div class="stepno" id="simStepNo">단계 0 / 3</div>
+        <h4 id="simTitle">공격 준비 완료</h4>
+        <div class="tx" id="simTx">// 아래 버튼을 눌러 공격을 시작하세요</div>
+        <div class="desc point" id="simDesc">공격자 지갑에는 10 ETH가 있고, 컨트랙트에는 그동안 쌓인 5 ETH가 들어 있습니다. 목표는 이 5 ETH를 전부 빼내는 것.</div>
+        <div class="simbtns">
+          <button class="btn primary" id="simNext">다음 단계 실행 →</button>
+          <button class="btn ghost" id="simReset" disabled>처음부터</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STAGE 3 : FIX ============ -->
+  <section class="stage" id="stage3">
+    <div class="eyebrow">STEP 3 — 취약점 고치기</div>
+    <h1>어디를, 어떻게 고쳐야 할까</h1>
+    <p class="diag">문제의 뿌리는 <code style="font-family:var(--mono);font-size:13px">receive()</code> 안에 있어요. 이 함수는 <b>"먼지만큼이라도 기여했고, 0보다 큰 ETH를 보냈다"</b>는 너무 약한 조건만으로 소유권을 넘겨줍니다. <code style="font-family:var(--mono);font-size:13px">receive()</code> 는 ETH를 받기만 해야지, 소유권을 바꿔선 안 됩니다. 아래 <b>36번 줄(<code style="font-family:var(--mono);font-size:13px">owner = msg.sender;</code>)을 제거</b>한 버전을 직접 따라 써 보세요.</p>
+
+    <div class="s3">
+      <div>
+        <div class="code">
+          <div class="code-hd"><span class="tl"><i></i><i></i><i></i></span>&nbsp;현재 (취약)</div>
+          <div class="code-body" id="codeBody3"></div>
+        </div>
+        <div class="target" style="margin-top:16px">
+          <div class="tt">// 따라 쓸 코드 (수정본)</div>
+          <pre id="targetCode"></pre>
+        </div>
+      </div>
+
+      <div>
+        <div class="editor">
+          <div class="el"><b>여기에 직접 입력하세요</b><span class="status no" id="edStatus">미완성</span></div>
+          <textarea id="editor" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="receive() external payable {
+    require(msg.value > 0 && contributions[msg.sender] > 0);
+}"></textarea>
+          <div class="fbk" id="fbk"></div>
+          <button class="revealbtn" id="reveal">막히면 정답 채워넣기</button>
+        </div>
+        <div class="note info" style="margin-top:18px">왜 이걸로 충분한가요? 소유권 변경 로직이 사라지면, <code style="font-family:var(--mono);font-size:12.5px">contribute()</code> 를 통한 정상 경로(owner의 1000 ETH를 넘어서기)로만 owner가 될 수 있는데 그건 사실상 불가능해요. 결과적으로 소유권 탈취 경로가 막힙니다.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STAGE 4 : DONE ============ -->
+  <section class="stage" id="stage4">
+    <div class="done">
+      <div class="seal">✓</div>
+      <h1>실습 완료</h1>
+      <p class="lede" style="margin:0 auto;text-align:center">Fallback 컨트랙트의 소유권 탈취를 처음부터 끝까지 따라왔어요. 아래는 오늘 익힌 흐름입니다.</p>
+
+      <div class="recap">
+        <div class="rc"><div class="n">1</div><div class="t"><b>구조 파악</b> — <code style="font-family:var(--mono);font-size:12.5px">receive()</code> 는 calldata 없는 ETH 전송에 자동 실행되고, 소유권까지 바꿀 수 있었다.</div></div>
+        <div class="rc"><div class="n">2</div><div class="t"><b>공격</b> — 먼지 기여 → 직접 송금으로 <code style="font-family:var(--mono);font-size:12.5px">receive()</code> 트리거 → owner 탈취 → <code style="font-family:var(--mono);font-size:12.5px">withdraw()</code> 로 전액 인출.</div></div>
+        <div class="rc"><div class="n">3</div><div class="t"><b>수정</b> — <code style="font-family:var(--mono);font-size:12.5px">receive()</code> 에서 소유권 변경 로직을 제거해 권한 상승 경로를 차단.</div></div>
+      </div>
+
+      <div class="takeaway">
+        <div class="q">핵심 한 줄</div>
+        <p>돈을 받는 통로(<code>receive</code> / <code>fallback</code>)에 <b>권한을 바꾸는 로직을 두지 마세요.</b> 소유권 이전 같은 민감한 동작은 명시적이고 엄격한 접근제어 아래에서만 일어나야 합니다.</p>
+      </div>
+
+      <div style="margin-top:26px;display:flex;gap:11px;justify-content:center;flex-wrap:wrap">
+        <button class="btn ghost" id="restart">처음부터 다시</button>
+        <button class="btn primary" id="toAttack">공격 단계 다시 보기</button>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- footer nav -->
+<div class="nav">
+  <div class="nav-in">
+    <button class="btn ghost" id="navBack" disabled>← 이전</button>
+    <div class="sp"></div>
+    <span class="hintline" id="navHint"></span>
+    <button class="btn primary" id="navNext">다음 →</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------- source lines ---------- */
+  var SRC = [
+    '// SPDX-License-Identifier: MIT',
+    'pragma solidity ^0.8.0;',
+    '',
+    'contract Fallback {',
+    '    mapping(address => uint256) public contributions;',
+    '    address public owner;',
+    '',
+    '    constructor() {',
+    '        owner = msg.sender;',
+    '        contributions[msg.sender] = 1000 * (1 ether);',
+    '    }',
+    '',
+    '    modifier onlyOwner() {',
+    '        require(msg.sender == owner, "caller is not the owner");',
+    '        _;',
+    '    }',
+    '',
+    '    function contribute() public payable {',
+    '        require(msg.value < 0.001 ether);',
+    '        contributions[msg.sender] += msg.value;',
+    '        if (contributions[msg.sender] > contributions[owner]) {',
+    '            owner = msg.sender;',
+    '        }',
+    '    }',
+    '',
+    '    function getContribution() public view returns (uint256) {',
+    '        return contributions[msg.sender];',
+    '    }',
+    '',
+    '    function withdraw() public onlyOwner {',
+    '        payable(owner).transfer(address(this).balance);',
+    '    }',
+    '',
+    '    receive() external payable {',
+    '        require(msg.value > 0 && contributions[msg.sender] > 0);',
+    '        owner = msg.sender;',
+    '    }',
+    '}'
+  ];
+
+  /* ---------- syntax highlighter (escape only & < >) ---------- */
+  var KW = ['pragma','solidity','contract','mapping','address','uint256','public','private',
+            'constructor','modifier','require','function','payable','view','returns','return',
+            'external','receive','fallback','if','else','msg','ether','memory','wei'];
+  var KWRE = new RegExp('\\b(' + KW.join('|') + ')\\b','g');
+  function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function hl(line){
+    if(/^\s*\/\//.test(line)) return '<span class="c-com">'+esc(line)+'</span>';
+    var s = esc(line);
+    s = s.replace(/"[^"]*"/g, function(m){ return '\u0001'+m+'\u0002'; }); // shield strings
+    s = s.replace(KWRE, '<span class="c-kw">$1</span>');
+    s = s.replace(/\b(\d+(?:\.\d+)*)\b/g, '<span class="c-num">$1</span>');
+    s = s.replace(/\u0001([^\u0002]*)\u0002/g, '<span class="c-str">$1</span>');
+    return s;
+  }
+
+  function renderCode(el, opts){
+    opts = opts || {};
+    var from = opts.from || 1, to = opts.to || SRC.length;
+    var hot = opts.hot || [];
+    var html = '';
+    for(var i=from; i<=to; i++){
+      var cls = 'ln';
+      if(hot.indexOf(i) > -1) cls += ' ' + (opts.hotClass || 'hot');
+      html += '<div class="'+cls+'"><span class="no">'+i+'</span><span class="tx">'+hl(SRC[i-1])+'</span></div>';
+    }
+    el.innerHTML = html;
+  }
+
+  /* ---------- STAGE 1 ---------- */
+  renderCode(document.getElementById('codeBody1'), {});
+
+  var FUNCS = [
+    { sig:'constructor()', tag:'생성자', lines:[8,9,10,11], vuln:false,
+      body:'<p>컨트랙트가 배포될 때 딱 한 번 실행돼요. 배포한 사람을 <code>owner</code>로 지정하고, 그 owner에게 <b>장부상</b> 1000 ETH만큼의 기여를 기록합니다.</p>'
+          +'<div class="note info">이 1000 ETH는 실제 잔액이 아니라 "기여 기록"일 뿐이에요. 하지만 이 숫자 때문에 <code>contribute()</code>로 owner를 앞지르는 건 거의 불가능해집니다.</div>' },
+    { sig:'modifier onlyOwner()', tag:'접근제어', lines:[13,14,15,16], vuln:false,
+      body:'<p>함수에 붙이면, 호출자가 <code>owner</code>가 아닐 경우 실행을 막습니다. <code>_;</code> 자리에 원래 함수 본문이 들어가요.</p><p><code>withdraw()</code>를 이 modifier가 지키고 있습니다.</p>' },
+    { sig:'contribute()', tag:'payable', lines:[18,19,20,21,22,23,24], vuln:false,
+      body:'<p><code>0.001 ETH 미만</code>만 받는 기부 함수. 기여액을 누적하고, 만약 내 기여가 owner의 기여보다 커지면 내가 owner가 됩니다.</p>'
+          +'<div class="note info">정상 경로처럼 보이지만 owner의 기여는 1000 ETH. 한 번에 0.001 ETH 미만씩 넣어서 1000 ETH를 넘기는 건 사실상 불가능합니다.</div>' },
+    { sig:'getContribution()', tag:'view', lines:[26,27,28], vuln:false,
+      body:'<p>내가 지금까지 얼마나 기여했는지 조회만 하는 함수예요. 상태를 바꾸지 않습니다(<code>view</code>).</p>' },
+    { sig:'withdraw()', tag:'onlyOwner', lines:[30,31,32], vuln:false,
+      body:'<p><code>owner</code>만 호출할 수 있고, 컨트랙트에 든 <b>모든 잔액</b>을 owner에게 보냅니다.</p><p>즉, owner가 되기만 하면 잔액을 통째로 가져갈 수 있어요. 그래서 "누가 owner가 되는가"가 핵심입니다.</p>' },
+    { sig:'receive()', tag:'취약점', lines:[34,35,36,37], vuln:true,
+      body:'<p>주소로 <b>calldata 없이 ETH만</b> 보내면 자동 실행되는 특수 함수예요. 조건은 단 두 가지: <code>보낸 ETH &gt; 0</code> 이고 <code>내 기여 &gt; 0</code>. 이것만 만족하면 <b>owner를 나로 바꿔버립니다.</b></p>'
+          +'<div class="note warn">⚠ 여기가 급소예요. <code>contribute()</code>로 아주 작게 한 번 기여해두면 "내 기여 &gt; 0" 조건이 채워지고, 그 뒤 컨트랙트로 ETH를 조금만 보내면 소유권이 넘어옵니다.</div>' }
+  ];
+
+  var fnlist = document.getElementById('fnlist');
+  var code1 = document.getElementById('codeBody1');
+  FUNCS.forEach(function(f, idx){
+    var el = document.createElement('div');
+    el.className = 'fn' + (f.vuln ? ' vuln' : '');
+    el.innerHTML =
+      '<div class="fn-hd"><span class="chev">▸</span><span class="sig">'+f.sig+'</span><span class="tag">'+f.tag+'</span></div>'+
+      '<div class="fn-body"><div class="inner">'+f.body+'</div></div>';
+    var hd = el.querySelector('.fn-hd');
+    var body = el.querySelector('.fn-body');
+    hd.addEventListener('click', function(){
+      var isOpen = el.classList.contains('open');
+      // close others
+      Array.prototype.forEach.call(fnlist.children, function(c){
+        c.classList.remove('open'); c.querySelector('.fn-body').style.maxHeight = '0px';
+      });
+      if(!isOpen){
+        el.classList.add('open');
+        body.style.maxHeight = body.querySelector('.inner').scrollHeight + 'px';
+        renderCode(code1, { hot:f.lines, hotClass: f.vuln ? 'hot' : 'cool' });
+      } else {
+        renderCode(code1, {});
+      }
+    });
+    fnlist.appendChild(el);
+  });
+
+  var CHIPS = [
+    ['mapping(address => uint256)', '주소 → 숫자 로 이어지는 장부(사전). 여기선 주소별 기여액을 저장.'],
+    ['msg.sender', '지금 이 함수를 호출한 사람의 지갑 주소.'],
+    ['msg.value', '호출과 함께 보낸 ETH 양 (단위: wei).'],
+    ['payable', '이 함수/컨트랙트가 ETH를 받을 수 있다는 표시.'],
+    ['modifier · _;', '함수 앞뒤에 끼우는 재사용 규칙. _; 는 원래 본문 자리.'],
+    ['receive() external payable', 'calldata 없이 ETH가 들어올 때 자동 실행되는 특수 함수.'],
+    ['1 ether', '10¹⁸ wei. 사람이 읽기 쉬운 단위 표기.'],
+    ['.transfer(address(this).balance)', '컨트랙트 잔액 전부를 특정 주소로 전송(실패 시 revert).']
+  ];
+  var chips = document.getElementById('chips');
+  CHIPS.forEach(function(c){
+    var d = document.createElement('div'); d.className='chip';
+    d.innerHTML = '<span class="k">'+esc(c[0])+'</span><span class="d">'+c[1]+'</span>';
+    chips.appendChild(d);
+  });
+
+  /* ---------- STAGE 2 : simulator ---------- */
+  var START = { atk:10, con:5, owner:'배포자', hijacked:false };
+  var STEPS = [
+    { // step 1
+      no:'단계 1 / 3', title:'먼지만큼 기여하기',
+      tx:'attacker <span class="arrow">→</span> Fallback.<span class="val">contribute</span>{ value: 0.0005 ETH }',
+      desc:'require(msg.value &lt; 0.001) 통과. 내 기여가 0.0005 ETH로 기록됩니다. "내 기여 &gt; 0" 이라는 조건의 씨앗을 심었어요. 아직 owner는 그대로.',
+      vuln:false, hot:[18,19,20],
+      state:{ atk:9.9995, con:5.0005, owner:'배포자', hijacked:false }
+    },
+    { // step 2
+      no:'단계 2 / 3', title:'receive() 를 건드려 소유권 탈취',
+      tx:'attacker <span class="arrow">→</span> Fallback  <span class="val">{ value: 0.001 ETH }</span>  // calldata 없음 → receive()',
+      desc:'calldata 없이 ETH만 보냈으니 receive()가 실행돼요. require(0.001 &gt; 0 &amp;&amp; 0.0005 &gt; 0) 통과 → <b>owner = 공격자</b>. 바로 이 지점이 취약점입니다.',
+      vuln:true, hot:[34,35,36],
+      state:{ atk:9.9985, con:5.0015, owner:'공격자', hijacked:true }
+    },
+    { // step 3
+      no:'단계 3 / 3', title:'withdraw() 로 전액 인출',
+      tx:'attacker(owner) <span class="arrow">→</span> Fallback.<span class="val">withdraw</span>()',
+      desc:'이제 공격자가 owner라서 onlyOwner를 통과합니다. 컨트랙트 잔액 전부(≈5 ETH)가 공격자 지갑으로 이동. 탈취 완료 — 순이익 약 +5 ETH.',
+      vuln:true, hot:[30,31],
+      state:{ atk:15.0, con:0, owner:'공격자', hijacked:true }
+    }
+  ];
+
+  var simIdx = 0, cur = Object.assign({}, START), reduce = matchMedia('(prefers-reduced-motion:reduce)').matches;
+  var atkEl=document.getElementById('atkBal'), conEl=document.getElementById('conBal'),
+      ownWho=document.getElementById('ownerWho'), ownBox=document.getElementById('ownerBox'),
+      ownBadge=document.getElementById('ownerBadge'),
+      simStepNo=document.getElementById('simStepNo'), simTitle=document.getElementById('simTitle'),
+      simTx=document.getElementById('simTx'), simDesc=document.getElementById('simDesc'),
+      simNext=document.getElementById('simNext'), simReset=document.getElementById('simReset'),
+      cardAtk=document.getElementById('cardAtk'), cardCon=document.getElementById('cardCon'),
+      codeBody2=document.getElementById('codeBody2');
+
+  renderCode(codeBody2, { from:17, to:37 });
+
+  function animateNum(el, from, to){
+    if(reduce){ el.textContent = to.toFixed(4); return; }
+    var t0=null, dur=520;
+    function frame(ts){ t0=t0||ts; var p=Math.min((ts-t0)/dur,1);
+      var e=1-Math.pow(1-p,3);
+      el.textContent = (from+(to-from)*e).toFixed(4);
+      if(p<1) requestAnimationFrame(frame); else el.textContent=to.toFixed(4);
+    }
+    requestAnimationFrame(frame);
+  }
+  function flash(card, up){
+    if(reduce) return;
+    card.classList.remove('flash-up','flash-dn');
+    void card.offsetWidth;
+    card.classList.add(up?'flash-up':'flash-dn');
+  }
+
+  function applyStep(i){
+    var s = STEPS[i], ns = s.state;
+    animateNum(atkEl, cur.atk, ns.atk);
+    animateNum(conEl, cur.con, ns.con);
+    if(ns.atk!==cur.atk) flash(cardAtk, ns.atk>cur.atk);
+    if(ns.con!==cur.con) flash(cardCon, ns.con>cur.con);
+    ownWho.textContent = ns.owner;
+    if(ns.hijacked){ ownBox.classList.add('hijacked'); ownBadge.textContent='탈취됨'; }
+    else { ownBox.classList.remove('hijacked'); ownBadge.textContent='정상'; }
+    simStepNo.textContent = s.no;
+    simTitle.textContent = s.title;
+    simTx.innerHTML = s.tx;
+    simDesc.innerHTML = s.desc;
+    simDesc.className = 'desc point' + (s.vuln ? ' v' : '');
+    renderCode(codeBody2, { from:17, to:37, hot:s.hot, hotClass: s.vuln ? 'hot' : 'cool' });
+    cur = Object.assign({}, ns);
+  }
+
+  function resetSim(){
+    simIdx=0; cur=Object.assign({}, START);
+    atkEl.textContent='10.0000'; conEl.textContent='5.0000';
+    ownWho.textContent='배포자'; ownBox.classList.remove('hijacked'); ownBadge.textContent='정상';
+    simStepNo.textContent='단계 0 / 3'; simTitle.textContent='공격 준비 완료';
+    simTx.innerHTML='// 아래 버튼을 눌러 공격을 시작하세요';
+    simDesc.className='desc point';
+    simDesc.textContent='공격자 지갑에는 10 ETH가 있고, 컨트랙트에는 그동안 쌓인 5 ETH가 들어 있습니다. 목표는 이 5 ETH를 전부 빼내는 것.';
+    simNext.disabled=false; simNext.textContent='다음 단계 실행 →'; simReset.disabled=true;
+    renderCode(codeBody2, { from:17, to:37 });
+    updateNav();
+  }
+
+  simNext.addEventListener('click', function(){
+    if(simIdx >= STEPS.length) return;
+    applyStep(simIdx);
+    simIdx++;
+    simReset.disabled=false;
+    if(simIdx >= STEPS.length){ simNext.disabled=true; simNext.textContent='공격 완료 ✓'; }
+    updateNav();
+  });
+  simReset.addEventListener('click', resetSim);
+
+  /* ---------- STAGE 3 : fix / type-along ---------- */
+  renderCode(document.getElementById('codeBody3'), { from:34, to:37, hot:[36], hotClass:'hot' });
+  var TARGET = 'receive() external payable {\n    require(msg.value > 0 && contributions[msg.sender] > 0);\n}';
+  document.getElementById('targetCode').textContent = TARGET;
+
+  function norm(s){ return s.replace(/\s+/g,' ').replace(/\s*([{}();])\s*/g,'$1').trim(); }
+  var editor=document.getElementById('editor'), edStatus=document.getElementById('edStatus'),
+      fbk=document.getElementById('fbk'), solved=false;
+  var normTarget = norm(TARGET);
+  // also accept variants that still remove the owner line but keep spacing differences
+  function checkFix(){
+    var v = editor.value;
+    if(v.trim()===''){ setState('empty'); return; }
+    if(norm(v)===normTarget){ setState('solved'); return; }
+    // near miss: contains owner assignment?
+    if(/owner\s*=\s*msg\.sender/.test(v)){ setState('hasowner'); return; }
+    setState('typing');
+  }
+  function setState(st){
+    solved = (st==='solved');
+    editor.classList.toggle('solved', solved);
+    if(st==='solved'){
+      edStatus.textContent='정확해요 ✓'; edStatus.className='status ok';
+      fbk.className='fbk solved'; fbk.textContent='소유권 변경 줄이 사라졌어요. 이제 receive()는 ETH를 받기만 합니다 — 탈취 경로가 닫혔습니다. 아래 "다음"으로 마무리하세요.';
+    } else if(st==='hasowner'){
+      edStatus.textContent='미완성'; edStatus.className='status no';
+      fbk.className='fbk close'; fbk.textContent='아직 owner = msg.sender; 줄이 남아 있어요. 이 한 줄이 소유권을 넘겨주는 원인입니다 — 지워 주세요.';
+    } else if(st==='typing'){
+      edStatus.textContent='입력 중…'; edStatus.className='status no';
+      fbk.className='fbk'; fbk.textContent='';
+    } else {
+      edStatus.textContent='미완성'; edStatus.className='status no';
+      fbk.className='fbk'; fbk.textContent='';
+    }
+    updateNav();
+  }
+  editor.addEventListener('input', checkFix);
+  // tab inserts spaces
+  editor.addEventListener('keydown', function(e){
+    if(e.key==='Tab'){ e.preventDefault();
+      var s=this.selectionStart, en=this.selectionEnd;
+      this.value=this.value.slice(0,s)+'    '+this.value.slice(en);
+      this.selectionStart=this.selectionEnd=s+4; checkFix();
+    }
+  });
+  document.getElementById('reveal').addEventListener('click', function(){
+    editor.value=TARGET; editor.focus(); checkFix();
+  });
+
+  /* ---------- stage navigation ---------- */
+  var stages=[document.getElementById('stage1'),document.getElementById('stage2'),
+              document.getElementById('stage3'),document.getElementById('stage4')];
+  var dots=document.querySelectorAll('#progress .pdot');
+  var navBack=document.getElementById('navBack'), navNext=document.getElementById('navNext'),
+      navHint=document.getElementById('navHint');
+  var stage=0;
+
+  function show(i){
+    stage=i;
+    stages.forEach(function(s,k){ s.classList.toggle('on', k===i); });
+    dots.forEach(function(d,k){ d.classList.remove('done','now');
+      if(k<i) d.classList.add('done'); else if(k===i) d.classList.add('now'); });
+    window.scrollTo({top:0, behavior: reduce ? 'auto':'smooth'});
+    updateNav();
+  }
+  function canAdvance(){
+    if(stage===1) return simIdx>=STEPS.length;      // must finish attack
+    if(stage===2) return solved;                    // must fix
+    return true;
+  }
+  function updateNav(){
+    navBack.disabled = (stage===0);
+    if(stage===3){ navNext.style.display='none'; }
+    else { navNext.style.display=''; }
+    if(stage===2){ navNext.textContent = solved ? '실습 마치기 →' : '다음 →'; }
+    else if(stage===1){ navNext.textContent='다음 →'; }
+    else { navNext.textContent='다음 →'; }
+    navNext.disabled = !canAdvance();
+    // hint text
+    if(stage===1 && !canAdvance()) navHint.textContent='오른쪽 콘솔에서 3단계까지 실행해 보세요';
+    else if(stage===2 && !canAdvance()) navHint.textContent='수정 코드를 완성하면 넘어갈 수 있어요';
+    else navHint.textContent='';
+  }
+  navNext.addEventListener('click', function(){ if(stage<3 && canAdvance()) show(stage+1); });
+  navBack.addEventListener('click', function(){ if(stage>0) show(stage-1); });
+
+  document.getElementById('restart').addEventListener('click', function(){ resetSim(); editor.value=''; setState('empty'); show(0); });
+  document.getElementById('toAttack').addEventListener('click', function(){ show(1); });
+
+  // init
+  resetSim();
+  setState('empty');
+  show(0);
+})();
+</script>
+</body>
+</html>
